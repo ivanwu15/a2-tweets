@@ -26,52 +26,58 @@ class Tweet {
         }
 
         // Completed or posted activities
-        if (t.startsWith('just completed a') || t.startsWith('just posted a')) {
-          return 'completed_event';
-        }
-
+        if (t.startsWith('just completed a') || t.startsWith('just posted a')) return 'completed_event';
+        
         return 'miscellaneous';
     }
 
     //returns a boolean, whether the text includes any content written by the person tweeting.
     get written():boolean {
         if (this.source !== 'completed_event') return false;
-    return this.text.indexOf(' - ') !== -1;
+        return this.text.indexOf(' - ') !== -1;
     }
 
     get writtenText(): string {
-    if (!this.written) return '';
-    const afterDash = this.text.split(' - ')[1] || '';
-    // Strip URLs and trailing RunKeeper hashtag
-    return afterDash.replace(/https?:\/\/\S+/g, '').replace(/#runkeeper/gi, '').trim();
+      if (!this.written) return '';
+      const after = (this.text.split(' - ')[1] || '')
+        .replace(/https?:\/\/\S+/g, '')   // strip URLs
+        .replace(/#runkeeper/gi, '')      // strip the common tag
+        .trim();
+      return after;
     }
 
     get activityType():string {
         if (this.source != 'completed_event') return "unknown";
         const t = this.text.toLowerCase();
-        if (t.includes('mtn bike')) return 'mtn bike';
-        if (t.includes(' bike')) return 'bike';
-        if (t.includes(' run')) return 'run';
-        if (t.includes(' walk')) return 'walk';
-        if (t.includes(' hike')) return 'hike';
-        if (t.includes(' swim')) return 'swim';
-        if (t.includes(' row')) return 'row';
-        if (t.includes(' elliptical')) return 'elliptical';
-        if (t.includes(' meditation')) return 'meditation';
-        if (t.includes('freestyle')) return 'freestyle';
-        if (t.includes(' circuit')) return 'circuit';
-        return 'activity';
+        
+        // Order matters (avoid catching "mtn bike" as "bike").
+       if (t.includes('mtn bike')) return 'mtn bike';
+       if (/\bride\b|\bbike\b/.test(t)) return 'bike';
+       if (/\brun\b/.test(t)) return 'run';
+       if (/\bwalk\b/.test(t)) return 'walk';
+       if (/\bhike\b/.test(t)) return 'hike';
+       if (/\bswim\b/.test(t)) return 'swim';
+       if (/\brow\b/.test(t)) return 'row';
+       if (/\belliptical\b/.test(t)) return 'elliptical';
+       if (/\bmeditation\b/.test(t)) return 'meditation';
+       if (/\bfreestyle\b/.test(t)) return 'freestyle';
+       if (/\bcircuit\b/.test(t)) return 'circuit';
+       return 'activity';
     }
 
     get distance():number {
-        if(this.source != 'completed_event') return 0;
-        const t = this.text.toLowerCase();
-        const km = t.match(/([0-9]+(?:\.[0-9]+)?)\s?km\b/);
-        if (km) return parseFloat(km[1]);
-        const mi = t.match(/([0-9]+(?:\.[0-9]+)?)\s?mi\b/);
-        if (mi) return parseFloat(mi[1]) * 1.60934;
-        return 0;
+        if (this.source !== 'completed_event') return 0;
+        const t = (this.text || '').toLowerCase();
+        const m = t.match(/([0-9]+(?:\.[0-9]+)?)\s?(mi|km)\b/);
+        if (!m) return 0;
+        const val = parseFloat(m[1]);
+        const unit = m[2];
+        return unit === 'km' ? val * 0.621371 : val; // miles
     }
+
+    /** Day-of-week helpers for charts. */
+    get weekdayIndex(): number { return this.time.getDay(); } // 0=Sun..6=Sat
+    get weekdayName(): string { return ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][this.weekdayIndex]; }
 
     getHTMLTableRow(rowNumber:number):string {
        const urlMatch = this.text.match(/https?:\/\/\S+/);
