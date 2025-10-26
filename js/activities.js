@@ -1,5 +1,12 @@
+'use strict';
+
+// ---------- Unified size for all charts (change here if you want) ----------
+const CHART_W = 600;  // width in pixels
+const CHART_H = 300;  // height in pixels
+
 let tweet_array = [];
 
+/** Count items by a key function. */
 function countBy(arr, keyFn) {
   const m = new Map();
   for (const x of arr) {
@@ -9,42 +16,111 @@ function countBy(arr, keyFn) {
   return m;
 }
 
+/** Arithmetic mean (skips non-finite values). */
 function mean(nums) {
-  const v = nums.filter(x => Number.isFinite(x));
+  const v = nums.filter(n => Number.isFinite(n));
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
 }
 
-function parseTweets(runkeeper_tweets) {
-	//Do not proceed if no tweets loaded
-	if (!Array.isArray(runkeeper_tweets)) {
-		window.alert('No tweets returned');
-        return;
-	}
-	
-	tweet_array = runkeeper_tweets.map(function(tweet) {
-		return new Tweet(tweet.text, tweet.created_at);
-	});
+/** Try to locate the <p> element that contains the summary line. */
+function getSummaryParagraph() {
+  const ids = ['weekdayOrWeekendLonger', 'longestActivityType', 'shortestActivityType'];
+  for (const id of ids) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (typeof el.closest === 'function') {
+      const p = el.closest('p');
+      if (p) return p;
+    }
+    // Fallback walk-up
+    let node = el;
+    while (node && node.tagName && node.tagName.toLowerCase() !== 'p') {
+      node = node.parentElement;
+    }
+    if (node) return node;
+  }
+  return null;
+}
 
-  // Use only completed events for activities/distances
+
+function pinButtonUnderSummary() {
+  const btn = document.getElementById('aggregate');
+  const vis = document.getElementById('distanceVis');
+  if (!btn || !vis || !vis.parentNode) return;
+
+  let anchor = document.getElementById('toggleAnchor');
+  let summaryP = getSummaryParagraph();
+
+  // If we found the summary <p>, ensure an anchor exists right after it
+  if (summaryP && summaryP.parentNode) {
+    if (!anchor) {
+      anchor = document.createElement('div');
+      anchor.id = 'toggleAnchor';
+      summaryP.insertAdjacentElement('afterend', anchor);
+    } else if (anchor.previousElementSibling !== summaryP) {
+      // Make sure anchor sits right after the summary <p>
+      summaryP.insertAdjacentElement('afterend', anchor);
+    }
+  } else {
+
+    const firstChart = document.getElementById('activityVis');
+    if (!anchor) {
+      anchor = document.createElement('div');
+      anchor.id = 'toggleAnchor';
+    }
+    if (firstChart && firstChart.parentNode && anchor.parentNode !== firstChart.parentNode) {
+      firstChart.parentNode.insertBefore(anchor, firstChart);
+    } else if (firstChart && firstChart.parentNode && anchor.nextElementSibling !== firstChart) {
+      firstChart.parentNode.insertBefore(anchor, firstChart);
+    }
+  }
+
+  // Move the button into the anchor
+  if (btn.parentNode !== anchor) anchor.appendChild(btn);
+
+  // Ensure the distance chart container follows the button (inside the same section)
+  if (vis.parentNode !== anchor.parentNode) {
+    anchor.parentNode.insertBefore(vis, anchor.nextSibling);
+  } else if (anchor.nextElementSibling !== vis) {
+    anchor.parentNode.insertBefore(vis, anchor.nextSibling);
+  }
+
+  btn.style.display = 'inline-block';
+  btn.style.margin = '8px 0 12px 0';
+}
+
+function parseTweets(runkeeper_tweets) {
+  if (!Array.isArray(runkeeper_tweets)) {
+    window.alert('No tweets returned');
+    return;
+  }
+
+  // Map raw objects -> Tweet instances (class defined in js/tweet.js)
+  tweet_array = runkeeper_tweets.map(t => new Tweet(t.text, t.created_at));
+
+  // Only completed events for activities/distances
   const completed = tweet_array.filter(t => t.source === 'completed_event');
 
   // ===== A) Distinct activity types & Top-3 by count =====
-  const counts = Array.from(countBy(completed, t => t.activityType), ([activity, count]) => ({ activity, count }))
+  const counts = Array.from(
+    countBy(completed, t => t.activityType),
+    ([activity, count]) => ({ activity, count })
+  )
     .filter(d => d.activity !== 'unknown')
     .sort((a, b) => b.count - a.count);
 
-  const top3 = counts.slice(0, 3);                   // Top-3 activity types by frequency
-  const topDomain = top3.map(d => d.activity);       // Keep colors consistent across charts
+  const top3 = counts.slice(0, 3);
+  const topDomain = top3.map(d => d.activity); // keep colors consistent
 
-  // Fill the sentence placeholders (IDs come from activities.html)
+  // Fill sentence placeholders
   document.getElementById('numberActivities').innerText = String(counts.length);
-  document.getElementById('firstMost').innerText = top3[0] ? top3[0].activity : 'N/A';
-  document.getElementById('secondMost').innerText = top3[1] ? top3[1].activity : 'N/A';
-  document.getElementById('thirdMost').innerText = top3[2] ? top3[2].activity : 'N/A';
+  document.getElementById('firstMost').innerText  = top3[0]?.activity ?? 'N/A';
+  document.getElementById('secondMost').innerText = top3[1]?.activity ?? 'N/A';
+  document.getElementById('thirdMost').innerText  = top3[2]?.activity ?? 'N/A';
 
-  // ===== B) Of those three, which tends to be longest/shortest (by mean distance)? =====
+  // ===== B) Longest/shortest among top-3 (by mean distance) =====
   const distancesByType = {};
-  top3.forEach(d => distancesByType[d.activity] = []);
+  top3.forEach(d => (distancesByType[d.activity] = []));
   completed.forEach(t => {
     if (distancesByType[t.activityType]) distancesByType[t.activityType].push(t.distance);
   });
@@ -53,117 +129,102 @@ function parseTweets(runkeeper_tweets) {
     .map(([activity, arr]) => ({ activity, mean: mean(arr) }))
     .sort((a, b) => b.mean - a.mean);
 
-  document.getElementById('longestActivityType').innerText = means[0]?.activity || 'N/A';
-  document.getElementById('shortestActivityType').innerText = means[means.length - 1]?.activity || 'N/A';
+  document.getElementById('longestActivityType').innerText  = means[0]?.activity || 'N/A';
+  document.getElementById('shortestActivityType').innerText = means.at(-1)?.activity || 'N/A';
 
-  // ===== C) Longest activities on weekday or weekend? (for top-3 combined) =====
+  // ===== C) Weekend vs weekday (top-3 combined) =====
   const topNames = new Set(top3.map(d => d.activity));
+  const dowOrder = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat'];
+
   const distRows = completed
     .filter(t => topNames.has(t.activityType) && t.distance > 0)
     .map(t => ({ Weekday: t.weekdayName, Distance: t.distance, Activity: t.activityType }));
 
-  const dowOrder = ['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
   const perDay = dowOrder.map(name => {
     const ds = distRows.filter(r => r.Weekday === name).map(r => r.Distance);
     return { name, mean: mean(ds) };
   });
-  const bestDow = perDay.reduce((best, cur) => cur.mean > best.mean ? cur : best, { name: 'Sun', mean: -1 }).name;
-  const weekendSet = new Set(['Sun','Sat']);
-  document.getElementById('weekdayOrWeekendLonger').innerText = weekendSet.has(bestDow) ? 'the weekend' : 'weekdays';
+  const bestDow =
+    perDay.reduce((best, cur) => (cur.mean > best.mean ? cur : best), { name: 'Sun', mean: -1 }).name;
+  document.getElementById('weekdayOrWeekendLonger').innerText =
+    (bestDow === 'Sun' || bestDow === 'Sat') ? 'the weekend' : 'weekdays';
 
-  // ======================= Vega-Lite Charts =======================
+  // === Pin the button under the summary NOW, before drawing charts ===
+  pinButtonUnderSummary();
 
-  // Chart 1: Number of completed tweets per activity type (bar)
-  const barData = counts.map(d => ({ Activity: d.activity, Count: d.count }));
+  // ======================= Charts =======================
+
+  // Chart 1: counts per activity (bar)
   const barSpec = {
     $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-    description: 'Number of completed tweets per activity type',
-    data: { values: barData },
+    description: 'Number of Tweets containing each type of activity.',
+    data: { values: counts.map(d => ({ Activity: d.activity, Count: d.count })) },
     mark: 'bar',
     encoding: {
       x: { field: 'Activity', type: 'nominal', sort: '-y' },
       y: { field: 'Count', type: 'quantitative' },
       tooltip: [{ field: 'Activity' }, { field: 'Count' }]
     },
-    width: 600, height: 300
+    width: CHART_W,
+    height: CHART_H
   };
   vegaEmbed('#activityVis', barSpec, { actions: false });
 
-  // Chart 2: Raw distances by DOW for top-3 (points)
+  // Single distance chart specs
   const rawSpec = {
     $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
     description: 'Raw distances by day of week for top-3 activities.',
     data: { values: distRows },
     mark: { type: 'point', tooltip: true },
     encoding: {
-      x: { field: 'Weekday', type: 'ordinal', sort: dowOrder },
-      y: { field: 'Distance', type: 'quantitative', title: 'Distance (mi)' },
-      color: { field: 'Activity', type: 'nominal' }
+      x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'time(day)' },
+      y: { field: 'Distance', type: 'quantitative', title: 'Distance' },
+      color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } }
     },
-    width: 600, height: 300
+    width: CHART_W,
+    height: CHART_H
   };
 
-  // Chart 3: Mean distance by DOW for top-3 (bars)
   const meanSpec = {
-  $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-  description: 'Mean distance by day of week for top-3 activities (points).',
-  data: { values: distRows }, // [{Weekday, Distance, Activity}]
-  // Compute the mean once and reuse it for plotting
-  transform: [
-    {
-      aggregate: [{ op: 'mean', field: 'Distance', as: 'MeanDistance' }],
-      groupby: ['Weekday', 'Activity']
-    }
-  ],
-  mark: { type: 'point', tooltip: true },
-  encoding: {
-    x: {
-      field: 'Weekday',
-      type: 'ordinal',
-      sort: dowOrder,               // ['Sun','Mon','Tue','Wed','Thu','Fri','Sat']
-      title: 'time (day)'
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    description: 'Mean distance by day of week for top-3 activities (points).',
+    data: { values: distRows },
+    transform: [
+      { aggregate: [{ op: 'mean', field: 'Distance', as: 'MeanDistance' }], groupby: ['Weekday', 'Activity'] }
+    ],
+    mark: { type: 'point', tooltip: true },
+    encoding: {
+      x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'time (day)' },
+      y: { field: 'MeanDistance', type: 'quantitative', title: 'Mean of distance' },
+      color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } }
     },
-    y: {
-      field: 'MeanDistance',
-      type: 'quantitative',
-      title: 'Mean of distance'
-    },
-    color: {
-      field: 'Activity',
-      type: 'nominal',
-      // Keep colors consistent with the raw points chart
-      scale: { domain: topDomain }
-    }
-  },
-  width: 600,
-  height: 300
-};
+    width: CHART_W,
+    height: CHART_H
+  };
 
-  // Initial: show raw points, hide aggregated
-  document.getElementById('distanceVisAggregated').style.display = 'none';
+  // Use ONE container (#distanceVis). Remove the unused aggregated container if present.
+  const oldAgg = document.getElementById('distanceVisAggregated');
+  if (oldAgg && oldAgg.parentNode) oldAgg.parentNode.removeChild(oldAgg);
+
+  // Initial render: raw points
   vegaEmbed('#distanceVis', rawSpec, { actions: false });
-  vegaEmbed('#distanceVisAggregated', meanSpec, { actions: false });
 
-  // Toggle with the button id="aggregate"
+  // Toggle: re-embed into the SAME container, and re-pin layout just in case
   const btn = document.getElementById('aggregate');
-  btn.textContent = 'Show means';
-  btn.addEventListener('click', () => {
-    const agg = document.getElementById('distanceVisAggregated');
-    const raw = document.getElementById('distanceVis');
-    const showingMeans = agg.style.display !== 'none';
-    if (showingMeans) {
-      agg.style.display = 'none';
-      raw.style.display = 'block';
-      btn.textContent = 'Show means';
-    } else {
-      raw.style.display = 'none';
-      agg.style.display = 'block';
-      btn.textContent = 'Show raw points';
-    }
-  });
+  let showingMean = false;
+  if (btn) {
+    btn.textContent = 'Show means';
+    btn.onclick = () => {
+      showingMean = !showingMean;
+      const spec = showingMean ? meanSpec : rawSpec;
+      pinButtonUnderSummary(); // enforce Summary -> Button -> Chart order again
+      vegaEmbed('#distanceVis', spec, { actions: false });
+      btn.textContent = showingMean ? 'Show raw points' : 'Show means';
+    };
+  }
 }
 
-//Wait for the DOM to load
-document.addEventListener('DOMContentLoaded', function (event) {
-	loadSavedRunkeeperTweets().then(parseTweets);
+// Boot
+document.addEventListener('DOMContentLoaded', () => {
+  loadSavedRunkeeperTweets().then(parseTweets);
 });
