@@ -1,6 +1,6 @@
 'use strict';
 
-// ---------- Unified size for all charts (change here if you want) ----------
+// ---------- Unified size for all charts ----------
 const CHART_W = 600;  // width in pixels
 const CHART_H = 300;  // height in pixels
 
@@ -16,7 +16,7 @@ function countBy(arr, keyFn) {
   return m;
 }
 
-/** Arithmetic mean (skips non-finite values). */
+/** Arithmetic mean. */
 function mean(nums) {
   const v = nums.filter(n => Number.isFinite(n));
   return v.length ? v.reduce((a, b) => a + b, 0) / v.length : 0;
@@ -172,7 +172,7 @@ function parseTweets(runkeeper_tweets) {
   };
   vegaEmbed('#activityVis', barSpec, { actions: false });
 
-  // ---- Extra credit A: One chart with two layers, toggled by a Vega param ----
+  // ---- Extra credit: One chart with two layers, toggled by a Vega param ----
   // Remove the unused aggregated container if present (we only use #distanceVis).
   const oldAgg = document.getElementById('distanceVisAggregated');
   if (oldAgg && oldAgg.parentNode) oldAgg.parentNode.removeChild(oldAgg);
