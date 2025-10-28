@@ -42,7 +42,10 @@ function getSummaryParagraph() {
   return null;
 }
 
-
+/**
+ * Put the toggle button right under the summary line,
+ * and keep #distanceVis immediately after it.
+ */
 function pinButtonUnderSummary() {
   const btn = document.getElementById('aggregate');
   const vis = document.getElementById('distanceVis');
@@ -58,11 +61,10 @@ function pinButtonUnderSummary() {
       anchor.id = 'toggleAnchor';
       summaryP.insertAdjacentElement('afterend', anchor);
     } else if (anchor.previousElementSibling !== summaryP) {
-      // Make sure anchor sits right after the summary <p>
       summaryP.insertAdjacentElement('afterend', anchor);
     }
   } else {
-
+    // Fallback: if summary <p> not found, place anchor above the first chart
     const firstChart = document.getElementById('activityVis');
     if (!anchor) {
       anchor = document.createElement('div');
@@ -78,7 +80,7 @@ function pinButtonUnderSummary() {
   // Move the button into the anchor
   if (btn.parentNode !== anchor) anchor.appendChild(btn);
 
-  // Ensure the distance chart container follows the button (inside the same section)
+  // Ensure the distance chart container follows the button
   if (vis.parentNode !== anchor.parentNode) {
     anchor.parentNode.insertBefore(vis, anchor.nextSibling);
   } else if (anchor.nextElementSibling !== vis) {
@@ -170,58 +172,71 @@ function parseTweets(runkeeper_tweets) {
   };
   vegaEmbed('#activityVis', barSpec, { actions: false });
 
-  // Single distance chart specs
-  const rawSpec = {
-    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-    description: 'Raw distances by day of week for top-3 activities.',
-    data: { values: distRows },
-    mark: { type: 'point', tooltip: true },
-    encoding: {
-      x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'time(day)' },
-      y: { field: 'Distance', type: 'quantitative', title: 'Distance' },
-      color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } }
-    },
-    width: CHART_W,
-    height: CHART_H
-  };
-
-  const meanSpec = {
-    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
-    description: 'Mean distance by day of week for top-3 activities (points).',
-    data: { values: distRows },
-    transform: [
-      { aggregate: [{ op: 'mean', field: 'Distance', as: 'MeanDistance' }], groupby: ['Weekday', 'Activity'] }
-    ],
-    mark: { type: 'point', tooltip: true },
-    encoding: {
-      x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'time (day)' },
-      y: { field: 'MeanDistance', type: 'quantitative', title: 'Mean of distance' },
-      color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } }
-    },
-    width: CHART_W,
-    height: CHART_H
-  };
-
-  // Use ONE container (#distanceVis). Remove the unused aggregated container if present.
+  // ---- Extra credit A: One chart with two layers, toggled by a Vega param ----
+  // Remove the unused aggregated container if present (we only use #distanceVis).
   const oldAgg = document.getElementById('distanceVisAggregated');
   if (oldAgg && oldAgg.parentNode) oldAgg.parentNode.removeChild(oldAgg);
 
-  // Initial render: raw points
-  vegaEmbed('#distanceVis', rawSpec, { actions: false });
+  // Build a single layered spec:
+  // Layer 1: RAW points (visible when showMean=false)
+  // Layer 2: MEAN points (aggregate -> calculate Distance=MeanDistance; visible when showMean=true)
+  const distLayerSpec = {
+    $schema: 'https://vega.github.io/schema/vega-lite/v5.json',
+    description: 'Raw vs Mean distances by weekday for top-3 activities (single chart, toggle).',
+    data: { values: distRows }, // [{Weekday, Distance, Activity}]
+    params: [{ name: 'showMean', value: false }], // initial view shows RAW
+    layer: [
+      {
+        mark: { type: 'point', tooltip: true },
+        encoding: {
+          x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'Weekday' },
+          y: { field: 'Distance', type: 'quantitative', title: 'Distance (mi)' },
+          color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } },
+          opacity: {
+            // If showMean is true, hide raw layer
+            condition: { test: 'showMean', value: 0 },
+            value: 1
+          }
+        }
+      },
+      {
+        transform: [
+          { aggregate: [{ op: 'mean', field: 'Distance', as: 'MeanDistance' }],
+            groupby: ['Weekday', 'Activity'] },
+          // Rename to Distance so both layers share ONE y-scale/axis
+          { calculate: 'datum.MeanDistance', as: 'Distance' }
+        ],
+        mark: { type: 'point', tooltip: true },
+        encoding: {
+          x: { field: 'Weekday', type: 'ordinal', sort: dowOrder, title: 'time (day)' },
+          y: { field: 'Distance', type: 'quantitative', title: 'Distance (mi)' },
+          color: { field: 'Activity', type: 'nominal', scale: { domain: topDomain } },
+          opacity: {
+            // If showMean is false, hide mean layer
+            condition: { test: 'showMean', value: 1 },
+            value: 0
+          }
+        }
+      }
+    ],
+    width: CHART_W,
+    height: CHART_H
+  };
 
-  // Toggle: re-embed into the SAME container, and re-pin layout just in case
-  const btn = document.getElementById('aggregate');
-  let showingMean = false;
-  if (btn) {
-    btn.textContent = 'Show means';
-    btn.onclick = () => {
-      showingMean = !showingMean;
-      const spec = showingMean ? meanSpec : rawSpec;
-      pinButtonUnderSummary(); // enforce Summary -> Button -> Chart order again
-      vegaEmbed('#distanceVis', spec, { actions: false });
-      btn.textContent = showingMean ? 'Show raw points' : 'Show means';
-    };
-  }
+  // Embed once; keep the Vega view to toggle the param without re-embedding
+  vegaEmbed('#distanceVis', distLayerSpec, { actions: false }).then(({ view }) => {
+    const btn = document.getElementById('aggregate');
+    let showingMean = false;
+    if (btn) {
+      btn.textContent = 'Show means';
+      btn.onclick = () => {
+        showingMean = !showingMean;
+        // Toggle Vega param and run the view — no re-embed, instant switch
+        view.signal('showMean', showingMean).run();
+        btn.textContent = showingMean ? 'Show raw points' : 'Show means';
+      };
+    }
+  });
 }
 
 // Boot
